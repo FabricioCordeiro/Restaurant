@@ -1,0 +1,162 @@
+﻿@page "/recipedetail/{idRecipe:int}"
+@inject IRecipeDetailService RecipeDetailService
+
+@if (isTimeout)
+{
+    <MudAlert Severity="Severity.Error" Class="mb-4">
+        Timeout: Falha ao carregar detalhes da receita. Por favor, tente novamente.
+    </MudAlert>
+}
+else if (recipeDetail != null)
+{
+    <MudGrid>
+        <MudItem xs="12" sm="6" Class="d-flex align-center justify-center">
+            <div>
+                <MudText Typo="Typo.h5">
+                    @recipeDetail.Name
+                </MudText>
+                <MudText>
+                    <strong>Category:</strong> @recipeDetail.Category
+                </MudText>
+                <MudText>
+                    <strong>Area:</strong> @recipeDetail.Area
+                </MudText>
+            </div>
+        </MudItem>
+
+        <MudItem xs="12" sm="6">
+            <MudPaper Elevation="2" Class="p-3 rounded-xl">
+                <iframe src="@recipeDetail.YoutubeLink.Replace("watch?v=","embed/")"
+                        style="padding:20px!important;height:20em!important;"
+                        frameborder="0"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                        referrerpolicy="strict-origin-when-cross-origin"
+                        allowfullscreen>
+                </iframe>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" sm="6">
+            <MudPaper Class="rounded-xl" Elevation="2">
+                <MudList>
+                    <MudListSubheader>
+                        <MudText Typo="Typo.h6">Ingredients</MudText>
+                    </MudListSubheader>
+                    @for (int i = 0; i < recipeDetail.Ingredients.Count; i++)
+                    {
+                        var ingredient = recipeDetail.Ingredients[i];
+                        var measure = recipeDetail.Measures[i];
+
+                        <MudListItem Dense="true">
+                            (@measure)
+                            <strong> @ingredient</strong>
+                        </MudListItem>
+                    }
+                </MudList>
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" sm="6">
+            <MudText Typo="Typo.h6">
+                <strong>Instructions</strong>
+            </MudText>
+            <MudDivider />
+            <MudText Class="pt-5">
+                @* Nem todas as intruções são sumarizadas com 1.*@
+                @((MarkupString)System.Text.RegularExpressions.Regex.Replace(
+                    recipeDetail.Instructions,
+                    @"\d+\.\s*",
+                    "<br>",
+                    System.Text.RegularExpressions.RegexOptions.Multiline
+                    ).TrimStart("<br>".ToCharArray()))
+            </MudText>
+        </MudItem>
+
+        <MudItem xs="12" Class="d-flex justify-center">
+            <MudImage Fluid="true"
+                      Src="@recipeDetail.ThumbnailUrl"
+                      Alt="@recipeDetail.Name"
+                      Class="rounded-lg mud-elevation-3" />
+        </MudItem>
+    </MudGrid>
+}
+else
+{
+    <MudProgressLinear Color="Color.Primary" Indeterminate="true" Class="my-3" />
+    <MudText Typo="Typo.h6" Class="d-flex align-center justify-center">Carregando receita</MudText>
+}
+
+@code {
+    [Parameter]
+    public int idRecipe { get; set; }
+    private RecipeDetailModel? recipeDetail;
+    private bool isLoading = false;
+    private bool isTimeout = false;
+    private bool isError = false;
+    private int attempts = 0;
+    private const int maxAttempts = 20;
+    private const int delayMs = 250;
+
+#warning nem todas as instruções são sumarizadas "1.,2.,3...". O regex não cobre tudo (linha 66)
+    protected override async Task OnAfterRenderAsync(bool firstrender)
+    {
+        if (firstrender)
+        {
+            RecipeDetailService.OnResponseReceived += HandleRecipeDetailResponse;
+            await LoadRecipeDetailAsync();
+        }
+    }
+
+    private async Task LoadRecipeDetailAsync()
+    {
+        #warning Sobre Redundancias e lifecycle
+        // Assim como no Index, aqui essas três variáveis já são atribuidas na inicialização.
+        // Porém, a redundância é para o caso haja uma implementação futura que chama LoadRecipeDetailAsync
+        // ainda na página (um botão de reloading por exemplo). Há algumas outras redundancias pelo código
+        // por motivos parecidos
+        isLoading = true;
+        isTimeout = false;
+
+        while (attempts < maxAttempts)
+        {
+            // Entendo que fazer multiplas requisições a cada 250ms até o recebimento da resposta
+            // por X tentavias é desperdicio de recursos. Todavia, nem toda requisição ao rabbit tem retorno apesar de que
+            // o microserviço processa a mensagem (vide logger). Ainda não sei se é alguma falha na lógica do domínio ou
+            // Algo relacionado ao host blazor server (talvez até o SignalR).
+            RecipeDetailService.Publish(idRecipe);
+
+            // Aguarda o tempo de delay antes de verificar a resposta.
+            await Task.Delay(delayMs);
+
+            if (recipeDetail != null)
+            {
+                // Resposta recebida com sucesso.
+                isLoading = false;
+                return;
+            }
+
+            attempts++;
+        }
+
+        // Se o loop terminou sem obter resposta, marca timeout.
+        isLoading = false;
+        isTimeout = true;
+
+        // E Atualiza o estado da interface.
+        StateHasChanged();
+    }
+
+    private void HandleRecipeDetailResponse(RecipeDetailModel detail)
+    {
+        if (detail.Id == idRecipe)
+        {
+            recipeDetail = detail;
+            isTimeout = false; // Desativa o timeout caso a resposta seja recebida a tempo.
+            InvokeAsync(StateHasChanged);
+        }
+    }
+
+    //O service é transient, porém isso é bem útil em serviços singleton.
+    public void Dispose() =>
+        RecipeDetailService.OnResponseReceived -= HandleRecipeDetailResponse;
+}

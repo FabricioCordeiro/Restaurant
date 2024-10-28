@@ -1,0 +1,145 @@
+﻿@page "/"
+@inject IRecipesService RecipesService
+@inject IJSRuntime JSRuntime
+
+<style>
+    .truncate-text {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 100%;
+    }
+</style>
+
+<PageTitle>Pesquisar Receita</PageTitle>
+
+<MudPaper Class="ma-2 mb-5 pe-3 ps-3 pa-2 rounded-lg d-flex gap-2 align-items-center transition-card" Elevation="3">
+    <MudTextField @bind-Value="searchText"
+                  Label="Pesquisar"
+                  Immediate="true"
+                  Clearable="true"
+                  Margin="Margin.Dense"
+                  Variant="Variant.Outlined"
+                  AdornmentColor="Color.Secondary"
+                  AutoFocus="true" 
+                  OnKeyUp="HandleKeyUp" />
+    <MudIconButton Icon="@Icons.Material.Filled.Search"
+                   Color="Color.Primary"
+                   Size="Size.Medium"
+                   Title="Pesquisar"
+                   OnClick="SearchRecipe" />
+</MudPaper>
+
+@if (isLoading)
+{
+    <MudProgressLinear Color="Color.Primary" Indeterminate="true" Class="my-1" />
+    <MudText Typo="Typo.h6" Class="d-flex align-center justify-center">Carregando receitas...</MudText>
+}
+else if (recipes.Count > 0)
+{
+    <MudGrid>
+        @foreach (var item in recipes)
+        {
+            <MudItem xs="12" sm="6" md="4" lg="3" title="@item.Name">
+                <MudCard Style="cursor: pointer;" onclick="@(() => OpenRecipeDetail(item.Id))">
+                    <MudCardMedia Image="@item.ThumbnailUrl" Height="200" />
+                    <MudCardContent>
+                        <MudText Class="truncate-text" Typo="Typo.body1">@item.Name</MudText>
+                    </MudCardContent>
+                </MudCard>
+            </MudItem>
+        }
+    </MudGrid>
+}
+else if (isError)
+{
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">Error: Erro ao buscar as receitas. Por favor, tente novamente.</MudAlert>
+}
+else if (isTimeout)
+{
+    <MudAlert Severity="Severity.Error" Variant="Variant.Outlined">Timeout: Tempo esgotado para buscar as receitas. Por favor, tente novamente.</MudAlert>
+}else {
+    <object type="image/svg+xml" data="/pizza-maker-animate.svg"></object>
+}
+
+@code {
+    private string searchText = string.Empty;
+    private List<RecipeModel> recipes = new();
+    private bool isLoading = false;
+    private bool isError = false;
+    private bool isTimeout = false;
+    private int attempts = 0;
+    private const int maxAttempts = 20;
+    private const int delayMs = 250;
+
+    protected override void OnInitialized() =>
+        RecipesService.OnResponseReceived += OnRecipesResponseReceived;
+
+    private void OnRecipesResponseReceived(List<RecipeModel> response)
+    {
+        if (response != null)
+        {
+            recipes = response;
+            isError = false;
+            isTimeout = false;
+        }
+        else
+        {
+            isError = true;
+        }
+        isLoading = false;
+
+        // O uso do invoke nesta linha se deve a thread que OnRecipesResponseReceived é executada.
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task HandleKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+            await SearchRecipe();
+    }
+
+    private async Task SearchRecipe()
+    {
+        isLoading = true;
+        isError = false;
+        isTimeout = false;
+        attempts = 0;
+        recipes.Clear();
+
+        while (attempts < maxAttempts)
+        {
+            // Entendo que fazer multiplas requisições a cada 250ms até o recebimento da resposta
+            // por X tentavias é desperdicio de recursos. Todavia, nem toda requisição ao rabbit tem retorno apesar de que
+            // o microserviço processa a mensagem (vide logger). Ainda não sei se é alguma falha na lógica do domínio ou
+            // Algo relacionado ao host blazor server (talvez até o SignalR).
+            RecipesService.Publish(searchText);
+
+            // Aguarda o tempo de delay antes de verificar a resposta.
+            await Task.Delay(delayMs);
+
+            if (recipes.Count > 0)
+            {
+                isLoading = false;
+                return;
+            }
+
+            attempts++;
+        }
+
+        // Se o loop terminou sem obter resposta, marca timeout.
+        isLoading = false;
+        isTimeout = true;
+
+        // E Atualiza o estado da interface.
+        StateHasChanged();
+    }
+
+    //Nova página para os detalhes da receita. NavigationManager não tem suporte para New Page
+    private async Task OpenRecipeDetail(int recipeId) =>
+        await JSRuntime.InvokeVoidAsync("open", $"/recipedetail/{recipeId}", "_blank");
+
+    //O service é transient, porém isso é bem útil em serviços singleton.
+    public void Dispose() =>
+        RecipesService.OnResponseReceived -= OnRecipesResponseReceived;
+}

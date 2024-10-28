@@ -1,0 +1,29 @@
+﻿@inherits LayoutComponentBase
+@inject NavigationManager NavigationManager
+
+<MudThemeProvider IsDarkMode="@isDarkMode" />
+
+<PageTitle>Restaurant</PageTitle>
+
+<MudLayout>
+    <MudAppBar Elevation="1" Dense="true">
+        <MudText Typo="Typo.h5" onclick="@(() => NavigationManager.NavigateTo("/", true))" Class="ml-3" Style="cursor: pointer;">Restaurant</MudText>
+        <MudSpacer />
+        <MudToggleIconButton @bind-Toggled="isDarkMode"
+                             Icon="@Icons.Material.Filled.DarkMode"
+                             Color="@Color.Dark"
+                             Title="Modo escuro"
+                             ToggledIcon="@Icons.Material.Filled.WbSunny"
+                             ToggledColor="@Color.Warning" 
+                             ToggledTitle="Modo claro" />
+    </MudAppBar>
+    <MudMainContent>
+        <MudContainer MaxWidth="MaxWidth.Medium" Class="pt-3">
+            @Body
+        </MudContainer>
+    </MudMainContent>
+</MudLayout>
+
+@code{
+    private bool isDarkMode = true;
+}
